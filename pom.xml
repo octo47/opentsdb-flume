@@ -6,7 +6,11 @@
 
     <groupId>opentsdb-flume</groupId>
     <artifactId>opentsdb-flume</artifactId>
-    <version>1.0</version>
+    <version>1.1.0</version>
+    
+    <build>
+	<finalName>../${project.artifactId}-${project.version}</finalName>
+    </build>
 
     <repositories>
         <repository>
