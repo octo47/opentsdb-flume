@@ -10,13 +10,23 @@ import org.jboss.netty.channel.Channel;
 import org.jboss.netty.channel.*;
 import org.jboss.netty.channel.socket.nio.NioServerSocketChannelFactory;
 import org.jboss.netty.handler.codec.string.StringEncoder;
+import org.jboss.netty.util.HashedWheelTimer;
+import org.jboss.netty.util.Timeout;
+import org.jboss.netty.util.TimerTask;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.Charset;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * @author Andrey Stepachev
@@ -28,12 +38,17 @@ public class OpenTSDBSource extends AbstractSource
           .getLogger(OpenTSDBSource.class);
   public static final Charset UTF8 = Charset.forName("UTF-8");
 
+  private int batchSize;
+  private BlockingQueue<Event> queue;
   private CounterGroup counterGroup = new CounterGroup();
   private String host;
   private int port;
   private Channel nettyChannel;
+  private Lock lock = new ReentrantLock();
+  private Condition cond = lock.newCondition();
 
   private byte[] PUT = {'p', 'u', 't'};
+  private Thread flushThread;
 
   public boolean isEvent(Event event) {
     int idx = 0;
@@ -45,6 +60,29 @@ public class OpenTSDBSource extends AbstractSource
     return true;
   }
 
+  class MyFlusher implements Runnable {
+
+    @Override
+    public void run() {
+      while (!Thread.interrupted()) {
+        try {
+          lock.lock();
+          int flushed = flush();
+          if (flushed == 0) {
+            try {
+              cond.await(100, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+              break;
+            }
+          }
+          if (logger.isDebugEnabled())
+            logger.debug("Flushed {}", flushed);
+        } finally {
+          lock.unlock();
+        }
+      }
+    }
+  }
 
   class EventHandler extends SimpleChannelHandler {
     @Override
@@ -54,14 +92,15 @@ public class OpenTSDBSource extends AbstractSource
         return;
       if (isEvent(line)) {
         try {
-          getChannelProcessor().processEvent(line);
-          counterGroup.incrementAndGet("events.success");
+          queue.offer(line);
         } catch (ChannelException ex) {
-          counterGroup.incrementAndGet("events.dropped");
-          logger.error("Error writing to channel, event dropped", ex);
+          logger.error("Error putting event to queue, event dropped", ex);
         }
       } else {
+        cond.signal();
         e.getChannel().write("ok\n");
+        if (logger.isDebugEnabled())
+          logger.debug("Waking up flusher");
       }
     }
   }
@@ -90,7 +129,9 @@ public class OpenTSDBSource extends AbstractSource
     } else {
       nettyChannel = serverBootstrap.bind(new InetSocketAddress(host, port));
     }
-
+    flushThread = new Thread(new MyFlusher());
+    flushThread.setDaemon(false);
+    flushThread.start();
     super.start();
   }
 
@@ -110,7 +151,24 @@ public class OpenTSDBSource extends AbstractSource
       }
     }
 
+    flushThread.interrupt();
+    try {
+      flushThread.join();
+    } catch (InterruptedException e) {
+    }
+    while (true) {
+      if ((flush() == 0)) break;
+    }
+
     super.stop();
+  }
+
+  private int flush() {
+    final List<Event> list = new ArrayList<Event>();
+    final int drained = queue.drainTo(list, batchSize);
+    getChannelProcessor().processEventBatch(list);
+    list.clear();
+    return drained;
   }
 
   @Override
@@ -118,5 +176,7 @@ public class OpenTSDBSource extends AbstractSource
     Configurables.ensureRequiredNonNull(context, "port");
     port = context.getInteger("port");
     host = context.getString("bind");
+    batchSize = context.getInteger("batchSize", 100);
+    queue = new ArrayBlockingQueue<Event>(batchSize * 100);
   }
 }
