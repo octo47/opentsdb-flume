@@ -75,7 +75,7 @@ public class OpenTSDBSource extends AbstractSource
               break;
             }
           }
-          if (logger.isDebugEnabled())
+          if (flushed > 0 && logger.isDebugEnabled())
             logger.debug("Flushed {}", flushed);
         } finally {
           lock.unlock();
