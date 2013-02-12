@@ -13,13 +13,13 @@
 package ru.yandex.opentsdb.flume;
 
 import org.apache.flume.Event;
-import org.apache.flume.event.SimpleEvent;
 import org.jboss.netty.buffer.ChannelBuffer;
-import org.jboss.netty.channel.*;
+import org.jboss.netty.channel.Channel;
+import org.jboss.netty.channel.ChannelHandlerContext;
+import org.jboss.netty.channel.Channels;
 import org.jboss.netty.handler.codec.frame.FrameDecoder;
 import org.jboss.netty.handler.codec.frame.TooLongFrameException;
 
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
