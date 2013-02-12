@@ -13,6 +13,7 @@ import org.apache.flume.EventDeliveryException;
 import org.apache.flume.Transaction;
 import org.apache.flume.conf.Configurable;
 import org.apache.flume.instrumentation.SinkCounter;
+import org.apache.flume.lifecycle.LifecycleState;
 import org.apache.flume.sink.AbstractSink;
 import org.hbase.async.HBaseClient;
 import org.hbase.async.HBaseRpc;
@@ -27,12 +28,16 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Sink, capable to do writes into opentsdb.
@@ -252,8 +257,8 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
   }
 
   /**
-   * Process event, spawns 'parallel' number of executors,
-   * and them concurrently take transactions and send them
+   * Process event, spawns up to 'parallel' number of executors,
+   * and concurrently take transactions and send
    * to hbase.
    *
    * @return Status
@@ -262,34 +267,44 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
   @Override
   public Status process() throws EventDeliveryException {
     final Channel channel = getChannel();
+    final BlockingQueue<Integer> next = new ArrayBlockingQueue<Integer>(parallel + 1);
     final List<Future<Long>> futures = new ArrayList<Future<Long>>();
-    final Callable<Long> worker = worker(channel);
+    final Callable<Long> worker = worker(channel, next);
     final ExecutorService service = Executors.newFixedThreadPool(parallel);
-    for (int i = 0; i < parallel; i++) {
-      futures.add(service.submit(worker));
-    }
+
     try {
-      long total = 0;
-      Exception exception = null;
-      for (Future<Long> future : futures) {
+      futures.add(service.submit(worker));
+      while (futures.size() > 0) {
         try {
-          final Long done = future.get();
-          total += done;
-        } catch (ExecutionException e) {
-          exception = e;
+          Integer handled;
+          while ((handled = next.poll(100, TimeUnit.MILLISECONDS)) != null) {
+            if (handled > batchSize / 2
+                    && futures.size() < parallel
+                    && !getLifecycleState().equals(LifecycleState.STOP)) {
+              futures.add(service.submit(worker));
+              futures.add(service.submit(worker));
+              logger.info("Additional worker spawned: threads=" + futures.size() + ", processed=" + handled);
+            }
+          }
+          final Iterator<Future<Long>> it = futures.iterator();
+          while (it.hasNext()) {
+            Future<Long> future = it.next();
+            if (future.isDone()) {
+              try {
+                future.get();
+              } catch (ExecutionException e) {
+                logger.error("Worker failed: ", e.getCause());
+              }
+              it.remove();
+            }
+          }
         } catch (InterruptedException e) {
-          exception = e;
+          service.shutdown();
         }
       }
-      if (exception != null)
-        throw Throwables.propagate(exception);
-
-      if (total == 0)
-        return Status.BACKOFF;
-      else
-        return Status.READY;
+      return Status.READY;
     } finally {
-      service.shutdown();
+      service.shutdownNow();
     }
   }
 
@@ -297,9 +312,10 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
    * Workhorse. Gets transaction, parses, sends to hbase storage.
    *
    * @param channel from where transactions are get
+   * @param next
    * @return callable
    */
-  private Callable<Long> worker(final Channel channel) {
+  private Callable<Long> worker(final Channel channel, final BlockingQueue<Integer> next) {
     return new Callable<Long>() {
       @Override
       public Long call() throws Exception {
@@ -319,28 +335,29 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
               continue;
             datas.add(eventData);
           }
-          total += datas.size();
-          if (datas.size() == 1) {
+          final int size = datas.size();
+          next.put(size);
+          total += size;
+          if (size == 1) {
             state.writeDataPoints(datas);
-          } else if (datas.size() > 0) {
+          } else if (size > 0) {
             // sort incoming datapoints, tsdb doesn't like unordered
             Collections.sort(datas, EventData.orderBySeriesAndTimestamp());
             int start = 0;
             String seriesKey = datas.get(0).seriesKey;
-            for (int end = 1; end < datas.size(); end++) {
+            for (int end = 1; end < size; end++) {
               if (!seriesKey.equals(datas.get(end).seriesKey)) {
                 state.writeDataPoints(datas.subList(start, end));
                 start = end;
               }
             }
-            state.writeDataPoints(datas.subList(start, datas.size()));
+            state.writeDataPoints(datas.subList(start, size));
             // trigger flush
             tsdb.flush();
             // and wait, until all our inflight deferred will complete
             state.join();
-            logger.info("Batch flushed: number of events " + datas.size());
             sinkCounter.incrementBatchCompleteCount();
-            if (datas.size() < batchSize)
+            if (size < batchSize)
               sinkCounter.incrementBatchUnderflowCount();
           }
           transaction.commit();
