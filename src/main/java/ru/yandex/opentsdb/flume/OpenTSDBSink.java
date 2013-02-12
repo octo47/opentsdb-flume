@@ -1,17 +1,18 @@
 package ru.yandex.opentsdb.flume;
 
 import com.google.common.base.Throwables;
-import com.google.common.cache.Cache;
-import com.google.common.cache.CacheBuilder;
 import com.stumbleupon.async.Callback;
 import com.stumbleupon.async.Deferred;
 import net.opentsdb.core.TSDB;
 import net.opentsdb.core.Tags;
 import net.opentsdb.core.WritableDataPoints;
-import org.apache.flume.*;
+import org.apache.flume.Channel;
+import org.apache.flume.Context;
+import org.apache.flume.Event;
+import org.apache.flume.EventDeliveryException;
+import org.apache.flume.Transaction;
 import org.apache.flume.conf.Configurable;
 import org.apache.flume.instrumentation.SinkCounter;
-import org.apache.flume.lifecycle.LifecycleState;
 import org.apache.flume.sink.AbstractSink;
 import org.hbase.async.HBaseClient;
 import org.hbase.async.HBaseRpc;
@@ -21,7 +22,17 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.charset.Charset;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /**
  * Sink, capable to do writes into opentsdb.
@@ -44,132 +55,305 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
   private String zkpath;
   private String seriesTable;
   private String uidsTable;
-  private int cacheSize = 2048;
+  private int parallel;
 
-  private class State {
-    boolean throttle = false;
-    Exception failure;
-    Cache<String, WritableDataPoints> datapoints =
-            CacheBuilder.newBuilder().maximumSize(cacheSize).build();
+  /**
+   * State object holds result of asynchronous operations.
+   * Implements throttle, when hbase can't handle incoming
+   * rate of data points.
+   * This object should be added as callback to handle throttles.
+   */
+  private class State implements Callback<Object, Exception> {
+    volatile boolean throttle = false;
+    volatile Exception failure;
+    private List<Deferred> inFlight = new ArrayList<Deferred>(batchSize);
 
-
-    private WritableDataPoints getDataPoints(final String metric,
-                                             final HashMap<String, String> tags) {
-      final String key = metric + tags;
-      WritableDataPoints dp = datapoints.getIfPresent(key);
-      if (dp != null) {
-        return dp;
+    public Object call(final Exception arg) {
+      if (arg instanceof PleaseThrottleException) {
+        final PleaseThrottleException e = (PleaseThrottleException) arg;
+        logger.warn("Need to throttle, HBase isn't keeping up.", e);
+        throttle = true;
+        final HBaseRpc rpc = e.getFailedRpc();
+        if (rpc instanceof PutRequest) {
+          hbaseClient.put((PutRequest) rpc);  // Don't lose edits.
+        }
+        return null;
       }
-      datapoints.put(key, dp);
-      return dp;
+      failure = arg;
+      return arg;
     }
 
+    /**
+     * Main entry method for adding points
+     *
+     * @param data points list
+     */
+    private void writeDataPoints(List<EventData> data) throws Exception {
+      if (data.size() < 1)
+        return;
+      final WritableDataPoints dataPoints = tsdb.newDataPoints();
+      final EventData first = data.get(0);
+      dataPoints.setSeries(first.metric, first.tags);
+      dataPoints.setBatchImport(false);
+      long prevTs = 0;
+      for (EventData eventData : data) {
+        if (eventData.timestamp == prevTs)
+          continue;
+        prevTs = eventData.timestamp;
+        final Deferred<Object> d = eventData.makeDeferred(dataPoints, this);
+        d.addErrback(this);
+        if (throttle)
+          throttle(d);
+        inFlight.add(d);
+      }
+    }
+
+    /**
+     * Wait for all deferries are complete
+     *
+     * @throws Exception
+     */
+    private void join() throws Exception {
+      for (Deferred deferred : inFlight) {
+        if (throttle) {
+          throttle(deferred);
+        } else {
+          deferred.join();
+        }
+      }
+    }
+
+    /**
+     * Helper method, implements throttle.
+     * Sleeps, until throttle will be switch off
+     * by successful operation.
+     *
+     * @param deferred
+     */
+    private void throttle(Deferred deferred) {
+      logger.info("Throttling...");
+      long throttle_time = System.nanoTime();
+      try {
+        deferred.join();
+      } catch (Exception e) {
+        throw new RuntimeException("Should never happen", e);
+      }
+      throttle_time = System.nanoTime() - throttle_time;
+      if (throttle_time < 1000000000L) {
+        logger.info("Got throttled for only " + throttle_time + "ns, sleeping a bit now");
+        try {
+          Thread.sleep(1000);
+        } catch (InterruptedException e) {
+          throw new RuntimeException("interrupted", e);
+        }
+      }
+      logger.info("Done throttling...");
+      throttle = false;
+    }
   }
 
-  @Override
-  public Status process() throws EventDeliveryException {
-    Status result = Status.READY;
-    final Channel channel = getChannel();
-    final State state = new State();
-    final class Errback implements Callback<Object, Exception> {
-      public Object call(final Exception arg) {
-        if (arg instanceof PleaseThrottleException) {
-          final PleaseThrottleException e = (PleaseThrottleException) arg;
-          logger.warn("Need to throttle, HBase isn't keeping up.", e);
-          state.throttle = true;
-          final HBaseRpc rpc = e.getFailedRpc();
-          if (rpc instanceof PutRequest) {
-            hbaseClient.put((PutRequest) rpc);  // Don't lose edits.
-          }
-          return null;
-        }
-        state.failure = arg;
-        return arg;
-      }
+  /**
+   * Parsed event.
+   */
+  private static class EventData {
 
-      public String toString() {
-        return "importFile errback";
+    final String seriesKey;
+    final String metric;
+    final long timestamp;
+    final String value;
+    final HashMap<String, String> tags;
+
+    public EventData(String seriesKey, String metric, long timestamp, String value, HashMap<String, String> tags) {
+      this.seriesKey = seriesKey;
+      this.metric = metric;
+      this.timestamp = timestamp;
+      this.value = value;
+      this.tags = tags;
+    }
+
+    public Deferred<Object> makeDeferred(WritableDataPoints dp, State state) {
+      Deferred<Object> d;
+      if (Tags.looksLikeInteger(value)) {
+        d = dp.addPoint(timestamp, Tags.parseLong(value));
+      } else {  // floating point value
+        d = dp.addPoint(timestamp, Float.parseFloat(value));
+      }
+      return d;
+    }
+
+    static Comparator<EventData> orderBySeriesAndTimestamp() {
+      return new Comparator<EventData>() {
+        public int compare(EventData o1, EventData o2) {
+          int c = o1.seriesKey.compareTo(o2.seriesKey);
+          if (c == 0)
+            return (o1.timestamp < o2.timestamp) ? -1 : (o1.timestamp == o2.timestamp ? 0 : 1);
+          else
+            return c;
+        }
+      };
+    }
+
+    @Override
+    public String toString() {
+      return "EventData{" +
+              "seriesKey='" + seriesKey + '\'' +
+              ", metric='" + metric + '\'' +
+              ", timestamp=" + timestamp +
+              ", value='" + value + '\'' +
+              ", tags=" + tags +
+              '}';
+    }
+  }
+
+
+  /**
+   * EventData 'constructor'
+   *
+   * @param event what to parse
+   * @return constructed EventData
+   */
+  private EventData parseEvent(Event event) {
+    final int idx = eventBodyStart(event);
+    if (idx == -1) {
+      logger.error("empty event");
+      return null;
+    }
+    final byte[] body = event.getBody();
+    final String[] words = Tags.splitString(
+            new String(body, idx, body.length - idx, UTF8), ' ');
+    final String metric = words[0];
+    if (metric.length() <= 0) {
+      logger.error("invalid metric: " + metric);
+      return null;
+    }
+    final long timestamp = Tags.parseLong(words[1]);
+    if (timestamp <= 0) {
+      logger.error("invalid metric: " + metric);
+      return null;
+    }
+    final String value = words[2];
+    if (value.length() <= 0) {
+      logger.error("invalid value: " + value);
+      return null;
+    }
+    final String[] tagWords = Arrays.copyOfRange(words, 3, words.length);
+    // keep them sorted, helps to identify tags in different order, but
+    // same set of them
+    Arrays.sort(tagWords);
+    final HashMap<String, String> tags = new HashMap<String, String>();
+    StringBuilder seriesKey = new StringBuilder(metric);
+    for (String tagWord : tagWords) {
+      if (!tagWord.isEmpty()) {
+        Tags.parse(tags, tagWord);
+        seriesKey.append(' ').append(tagWord);
       }
     }
-    final Errback errback = new Errback();
-    int batch = 0;
-    do {
-      Transaction transaction = channel.getTransaction();
-      Event event;
-      try {
-        while ((event = channel.take()) != null && batch < batchSize) {
-          final int idx = eventBodyStart(event);
-          if (idx == -1) {
-            logger.error("empty event");
-            continue;
+    return new EventData(seriesKey.toString(), metric, timestamp, value, tags);
+  }
+
+  /**
+   * Process event, spawns 'parallel' number of executors,
+   * and them concurrently take transactions and send them
+   * to hbase.
+   *
+   * @return Status
+   * @throws EventDeliveryException
+   */
+  @Override
+  public Status process() throws EventDeliveryException {
+    final Channel channel = getChannel();
+    final List<Future<Long>> futures = new ArrayList<Future<Long>>();
+    final Callable<Long> worker = worker(channel);
+    final ExecutorService service = Executors.newFixedThreadPool(parallel);
+    for (int i = 0; i < parallel; i++) {
+      futures.add(service.submit(worker));
+    }
+    try {
+      long total = 0;
+      Exception exception = null;
+      for (Future<Long> future : futures) {
+        try {
+          final Long done = future.get();
+          total += done;
+        } catch (ExecutionException e) {
+          exception = e;
+        } catch (InterruptedException e) {
+          exception = e;
+        }
+      }
+      if (exception != null)
+        throw Throwables.propagate(exception);
+
+      if (total == 0)
+        return Status.BACKOFF;
+      else
+        return Status.READY;
+    } finally {
+      service.shutdown();
+    }
+  }
+
+  /**
+   * Workhorse. Gets transaction, parses, sends to hbase storage.
+   *
+   * @param channel from where transactions are get
+   * @return callable
+   */
+  private Callable<Long> worker(final Channel channel) {
+    return new Callable<Long>() {
+      @Override
+      public Long call() throws Exception {
+        long total = 0;
+        ArrayList<EventData> datas = new ArrayList<EventData>(batchSize);
+        final State state = new State();
+        Transaction transaction = channel.getTransaction();
+        Event event;
+        try {
+          transaction.begin();
+          while ((event = channel.take()) != null && datas.size() < batchSize) {
+            if (state.failure != null)
+              throw Throwables.propagate(state.failure);
+
+            final EventData eventData = parseEvent(event);
+            if (eventData == null)
+              continue;
+            datas.add(eventData);
           }
-          final byte[] body = event.getBody();
-          final String[] words = Tags.splitString(
-                  new String(body, idx, body.length - idx, UTF8), ' ');
-          final String metric = words[0];
-          if (metric.length() <= 0) {
-            logger.error("invalid metric: " + metric);
-            continue;
-          }
-          final long timestamp = Tags.parseLong(words[1]);
-          if (timestamp <= 0) {
-            logger.error("invalid metric: " + metric);
-            continue;
-          }
-          final String value = words[2];
-          if (value.length() <= 0) {
-            throw new RuntimeException("invalid value: " + value);
-          }
-          final HashMap<String, String> tags = new HashMap<String, String>();
-          for (int i = 3; i < words.length; i++) {
-            if (!words[i].isEmpty()) {
-              Tags.parse(tags, words[i]);
-            }
-          }
-          final WritableDataPoints dp = state.getDataPoints(metric, tags);
-          Deferred<Object> d;
-          if (Tags.looksLikeInteger(value)) {
-            d = dp.addPoint(timestamp, Tags.parseLong(value));
-          } else {  // floating point value
-            d = dp.addPoint(timestamp, Float.parseFloat(value));
-          }
-          d.addErrback(errback);
-          if (state.throttle) {
-            logger.info("Throttling...");
-            long throttle_time = System.nanoTime();
-            try {
-              d.joinUninterruptibly();
-            } catch (Exception e) {
-              throw new RuntimeException("Should never happen", e);
-            }
-            throttle_time = System.nanoTime() - throttle_time;
-            if (throttle_time < 1000000000L) {
-              logger.info("Got throttled for only " + throttle_time + "ns, sleeping a bit now");
-              try {
-                Thread.sleep(1000);
-              } catch (InterruptedException e) {
-                throw new RuntimeException("interrupted", e);
+          total += datas.size();
+          if (datas.size() == 1) {
+            state.writeDataPoints(datas);
+          } else if (datas.size() > 0) {
+            // sort incoming datapoints, tsdb doesn't like unordered
+            Collections.sort(datas, EventData.orderBySeriesAndTimestamp());
+            int start = 0;
+            String seriesKey = datas.get(0).seriesKey;
+            for (int end = 1; end < datas.size(); end++) {
+              if (!seriesKey.equals(datas.get(end).seriesKey)) {
+                state.writeDataPoints(datas.subList(start, end));
+                start = end;
               }
             }
-            logger.info("Done throttling...");
-            state.throttle = false;
+            state.writeDataPoints(datas.subList(start, datas.size()));
+            // trigger flush
+            tsdb.flush();
+            // and wait, until all our inflight deferred will complete
+            state.join();
+            logger.info("Batch flushed: number of events " + datas.size());
+            sinkCounter.incrementBatchCompleteCount();
+            if (datas.size() < batchSize)
+              sinkCounter.incrementBatchUnderflowCount();
           }
-          batch++;
+          transaction.commit();
+        } catch (Throwable t) {
+          logger.error("Batch failed: number of events " + datas.size(), t);
+          transaction.rollback();
+          throw Throwables.propagate(t);
+        } finally {
+          transaction.close();
         }
-        try {
-          tsdb.flush().join();
-        } catch (Exception e) {
-          throw Throwables.propagate(e);
-        }
-        sinkCounter.incrementBatchCompleteCount();
-        if (batch < batchSize)
-          sinkCounter.incrementBatchUnderflowCount();
-      } finally {
-        transaction.close();
+        return total;
       }
-    } while (batch > 0 && getLifecycleState().equals(LifecycleState.IDLE));
-
-    return result;
+    };
   }
 
   private byte[] PUT = {'p', 'u', 't'};
@@ -182,8 +366,10 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
         return -1;
     }
     while (idx < body.length) {
-      if (body[idx] != ' ' && body[idx] != '\t')
+      if (body[idx] != ' ') {
         return idx;
+      }
+      idx++;
     }
     return -1;
   }
@@ -196,14 +382,17 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
     zkquorum = context.getString("zkquorum");
     zkpath = context.getString("zkpath", "/hbase");
     seriesTable = context.getString("table.main", "tsdb");
-    uidsTable = context.getString("table.main", "tsdb");
+    uidsTable = context.getString("table.uids", "tsdb-uid");
+    parallel = context.getInteger("parallel", Runtime.getRuntime().availableProcessors() / 2 + 1);
   }
 
   @Override
   public synchronized void start() {
-    super.start();
+    logger.info(String.format("Starting: %s:%s series:%s uids:%s batchSize:%d",
+            zkquorum, zkpath, seriesTable, uidsTable, batchSize));
     hbaseClient = new HBaseClient(zkquorum, zkpath);
     tsdb = new TSDB(hbaseClient, seriesTable, uidsTable);
+    super.start();
   }
 
   @Override
