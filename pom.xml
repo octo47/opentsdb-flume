@@ -28,7 +28,7 @@
                             <overWriteReleases>false</overWriteReleases>
                             <overWriteSnapshots>false</overWriteSnapshots>
                             <overWriteIfNewer>true</overWriteIfNewer>
-                            <excludeArtifactIds>gwt-user,validation-api</excludeArtifactIds>
+                            <excludeArtifactIds>gwt-user,validation-api,log4j-over-slf4j</excludeArtifactIds>
                             <excludeGroupIds>ch.qos.logback</excludeGroupIds>
                         </configuration>
                     </execution>
