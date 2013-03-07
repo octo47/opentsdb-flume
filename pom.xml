@@ -24,13 +24,11 @@
                         </goals>
                         <configuration>
                             <includeScope>runtime</includeScope>
-                            <includeScope>provided</includeScope>
                             <outputDirectory>${project.build.directory}/lib</outputDirectory>
                             <overWriteReleases>false</overWriteReleases>
                             <overWriteSnapshots>false</overWriteSnapshots>
                             <overWriteIfNewer>true</overWriteIfNewer>
-                            <excludeArtifactIds>gwt-user,validation-api,log4j-over-slf4j</excludeArtifactIds>
-                            <excludeGroupIds>ch.qos.logback</excludeGroupIds>
+                            <excludeArtifactIds>gwt-user,validation-api</excludeArtifactIds>
                         </configuration>
                     </execution>
                 </executions>
@@ -55,8 +53,12 @@
         <dependency>
             <groupId>org.apache.flume</groupId>
             <artifactId>flume-ng-core</artifactId>
-            <version>1.2.0-cdh4.1.2</version>
-            <scope>provided</scope>
+            <version>1.2.0-cdh4.1.3</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flume</groupId>
+            <artifactId>flume-ng-node</artifactId>
+            <version>1.2.0-cdh4.1.3</version>
         </dependency>
         <dependency>
             <groupId>net.opentsdb</groupId>
@@ -64,16 +66,39 @@
             <version>1.1.0</version>
         </dependency>
         <dependency>
-            <groupId>org.apache.flume.flume-ng-sinks</groupId>
-            <artifactId>flume-hdfs-sink</artifactId>
-            <version>1.2.0-cdh4.1.2</version>
-            <scope>provided</scope>
-        </dependency>
-        <dependency>
             <groupId>org.apache.flume.flume-ng-channels</groupId>
             <artifactId>flume-file-channel</artifactId>
-            <version>1.2.0-cdh4.1.2</version>
-            <scope>provided</scope>
+            <version>1.2.0-cdh4.1.3</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.hadoop</groupId>
+            <artifactId>hadoop-common</artifactId>
+            <version>2.0.0-cdh4.1.3</version>
+        </dependency>
+        <dependency>
+           <groupId>org.slf4j</groupId>
+           <artifactId>slf4j-api</artifactId>
+           <version>1.6.4</version>
+        </dependency>
+        <dependency>
+           <groupId>org.slf4j</groupId>
+           <artifactId>log4j-over-slf4j</artifactId>
+           <version>1.6.4</version>
+        </dependency>
+        <dependency>
+           <groupId>org.slf4j</groupId>
+           <artifactId>jcl-over-slf4j</artifactId>
+           <version>1.6.4</version>
+        </dependency>
+	<dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <version>1.0.0</version>
+        </dependency>
+	<dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-core</artifactId>
+            <version>1.0.0</version>
         </dependency>
     </dependencies>
 
