@@ -24,6 +24,7 @@
                         </goals>
                         <configuration>
                             <includeScope>runtime</includeScope>
+                            <includeScope>provided</includeScope>
                             <outputDirectory>${project.build.directory}/lib</outputDirectory>
                             <overWriteReleases>false</overWriteReleases>
                             <overWriteSnapshots>false</overWriteSnapshots>
