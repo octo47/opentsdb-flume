@@ -28,8 +28,10 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
@@ -99,17 +101,28 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
       final WritableDataPoints dataPoints = tsdb.newDataPoints();
       final EventData first = data.get(0);
       dataPoints.setSeries(first.metric, first.tags);
-      dataPoints.setBatchImport(false);
+      dataPoints.setBatchImport(false); // we need data to be persisted
       long prevTs = 0;
+      Set<String> failures = new HashSet<String>();
       for (EventData eventData : data) {
-        if (eventData.timestamp == prevTs)
-          continue;
-        prevTs = eventData.timestamp;
-        final Deferred<Object> d = eventData.makeDeferred(dataPoints, this);
-        d.addErrback(this);
-        if (throttle)
-          throttle(d);
-        inFlight.add(d);
+        try {
+          if (eventData.timestamp == prevTs)
+            continue;
+          sinkCounter.incrementEventDrainAttemptCount();
+          prevTs = eventData.timestamp;
+          final Deferred<Object> d =
+                  eventData.makeDeferred(dataPoints, this);
+          d.addErrback(this);
+          if (throttle)
+            throttle(d);
+          inFlight.add(d);
+          sinkCounter.incrementEventDrainSuccessCount();
+        } catch (IllegalArgumentException ie) {
+          failures.add(ie.getMessage());
+        }
+      }
+      if (failures.size() > 0) {
+        logger.error("Points imported with " + failures.toString() + " IllegalArgumentExceptions");
       }
     }
 
@@ -357,6 +370,7 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
               }
             }
             state.writeDataPoints(datas.subList(start, size));
+
             // trigger flush
             tsdb.flush();
             // and wait, until all our inflight deferred will complete
