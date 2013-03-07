@@ -102,10 +102,15 @@ public class OpenTSDBSource extends AbstractSource
           logger.error("Error putting event to queue, event dropped", ex);
         }
       } else {
-        cond.signal();
-        e.getChannel().write("ok\n");
-        if (logger.isDebugEnabled())
-          logger.debug("Waking up flusher");
+        lock.lock();
+        try {
+          cond.signal();
+          e.getChannel().write("ok\n");
+          if (logger.isDebugEnabled())
+            logger.debug("Waking up flusher");
+        } finally {
+          lock.unlock();
+        }
       }
     }
   }

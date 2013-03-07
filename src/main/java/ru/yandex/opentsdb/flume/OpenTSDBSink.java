@@ -330,10 +330,15 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
             if (state.failure != null)
               throw Throwables.propagate(state.failure);
 
-            final EventData eventData = parseEvent(event);
-            if (eventData == null)
+            try {
+              final EventData eventData = parseEvent(event);
+              if (eventData == null)
+                continue;
+
+              datas.add(eventData);
+            } catch (Exception e) {
               continue;
-            datas.add(eventData);
+            }
           }
           final int size = datas.size();
           next.put(size);
