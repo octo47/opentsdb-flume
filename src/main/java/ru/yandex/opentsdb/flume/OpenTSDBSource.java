@@ -167,18 +167,33 @@ public class OpenTSDBSource extends AbstractSource
     } catch (InterruptedException e) {
     }
     while (true) {
-      if ((flush() == 0)) break;
+      if ((flush(true) == 0)) break;
     }
 
     super.stop();
   }
 
   private int flush() {
-    final List<Event> list = new ArrayList<Event>();
-    final int drained = queue.drainTo(list, batchSize);
-    getChannelProcessor().processEventBatch(list);
-    list.clear();
-    return drained;
+    return flush(false);
+  }
+
+  private int flush(boolean force) {
+    try {
+      final List<Event> list = new ArrayList<Event>();
+      final int drained = queue.drainTo(list, batchSize);
+      getChannelProcessor().processEventBatch(list);
+      list.clear();
+      return drained;
+    } catch (ChannelException fce) {
+      if (force) {
+        logger.error("Forced to flush, but we've lost " + queue.size() +
+                " events, channel don't accepts data", fce);
+        return 0;
+      } else {
+        logger.error("Can't flush, channel don't accept our events", fce);
+        throw fce;
+      }
+    }
   }
 
   @Override
