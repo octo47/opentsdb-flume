@@ -1,5 +1,6 @@
 package ru.yandex.opentsdb.flume;
 
+import com.google.common.base.Charsets;
 import org.apache.flume.ChannelException;
 import org.apache.flume.Context;
 import org.apache.flume.Event;
@@ -18,7 +19,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
-import java.nio.charset.Charset;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
@@ -29,7 +29,6 @@ public class OpenTSDBSource extends AbstractQueuedSource {
 
   private static final Logger logger = LoggerFactory
           .getLogger(OpenTSDBSource.class);
-  public static final Charset UTF8 = Charset.forName("UTF-8");
 
   private String host;
   private int port;
@@ -97,7 +96,7 @@ public class OpenTSDBSource extends AbstractQueuedSource {
         EventHandler handler = new EventHandler();
         final ChannelPipeline pipeline = Channels.pipeline(handler);
         pipeline.addFirst("decoder", new LineBasedFrameDecoder(1024));
-        pipeline.addLast("encoder", new StringEncoder(UTF8));
+        pipeline.addLast("encoder", new StringEncoder(Charsets.UTF_8));
         return pipeline;
       }
     });
