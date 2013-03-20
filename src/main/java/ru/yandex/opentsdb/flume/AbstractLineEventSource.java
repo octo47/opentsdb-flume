@@ -22,14 +22,14 @@ import java.util.concurrent.locks.ReentrantLock;
 /**
  * @author Andrey Stepachev
  */
-public class AbstractQueuedSource
+public class AbstractLineEventSource
         extends AbstractSource
         implements EventDrivenSource, Configurable {
 
   private static final Logger logger = LoggerFactory
-          .getLogger(AbstractQueuedSource.class);
+          .getLogger(AbstractLineEventSource.class);
 
-  protected BlockingQueue<Event> queue;
+  protected BlockingQueue<LineBasedFrameDecoder.LineEvent> queue;
   protected CounterGroup counterGroup = new CounterGroup();
   protected Lock lock = new ReentrantLock();
   protected Condition cond = lock.newCondition();
@@ -62,7 +62,7 @@ public class AbstractQueuedSource
   @Override
   public void configure(Context context) {
     batchSize = context.getInteger("batchSize", 100);
-    queue = new ArrayBlockingQueue<Event>(batchSize * 100);
+    queue = new ArrayBlockingQueue<LineBasedFrameDecoder.LineEvent>(batchSize * 100);
   }
 
   class MyFlusher implements Runnable {

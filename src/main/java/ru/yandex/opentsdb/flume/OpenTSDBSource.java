@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * @author Andrey Stepachev
  */
-public class OpenTSDBSource extends AbstractQueuedSource {
+public class OpenTSDBSource extends AbstractLineEventSource {
 
   private static final Logger logger = LoggerFactory
           .getLogger(OpenTSDBSource.class);
@@ -50,7 +50,7 @@ public class OpenTSDBSource extends AbstractQueuedSource {
   class EventHandler extends SimpleChannelHandler {
     @Override
     public void messageReceived(ChannelHandlerContext ctx, MessageEvent e) throws Exception {
-      Event line = (Event) e.getMessage();
+      LineBasedFrameDecoder.LineEvent line = (LineBasedFrameDecoder.LineEvent) e.getMessage();
       if (line == null) {
         return;
       }
