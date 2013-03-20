@@ -2,12 +2,8 @@ package ru.yandex.opentsdb.flume;
 
 import org.apache.flume.ChannelException;
 import org.apache.flume.Context;
-import org.apache.flume.CounterGroup;
 import org.apache.flume.Event;
-import org.apache.flume.EventDrivenSource;
-import org.apache.flume.conf.Configurable;
 import org.apache.flume.conf.Configurables;
-import org.apache.flume.source.AbstractSource;
 import org.jboss.netty.bootstrap.ServerBootstrap;
 import org.jboss.netty.channel.Channel;
 import org.jboss.netty.channel.ChannelHandlerContext;
@@ -23,78 +19,42 @@ import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.Charset;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * @author Andrey Stepachev
  */
-public class OpenTSDBSource extends AbstractSource
-        implements EventDrivenSource, Configurable {
+public class OpenTSDBSource extends AbstractQueuedSource {
 
   private static final Logger logger = LoggerFactory
           .getLogger(OpenTSDBSource.class);
   public static final Charset UTF8 = Charset.forName("UTF-8");
 
-  private int batchSize;
-  private BlockingQueue<Event> queue;
-  private CounterGroup counterGroup = new CounterGroup();
   private String host;
   private int port;
   private Channel nettyChannel;
-  private Lock lock = new ReentrantLock();
-  private Condition cond = lock.newCondition();
 
   private byte[] PUT = {'p', 'u', 't'};
-  private Thread flushThread;
 
   public boolean isEvent(Event event) {
     int idx = 0;
     final byte[] body = event.getBody();
     for (byte b : PUT) {
-      if (body[idx++] != b)
+      if (body[idx++] != b) {
         return false;
-    }
-    return true;
-  }
-
-  class MyFlusher implements Runnable {
-
-    @Override
-    public void run() {
-      while (!Thread.interrupted()) {
-        try {
-          lock.lock();
-          int flushed = flush();
-          if (flushed == 0) {
-            try {
-              cond.await(100, TimeUnit.MILLISECONDS);
-            } catch (InterruptedException e) {
-              break;
-            }
-          }
-          if (flushed > 0 && logger.isDebugEnabled())
-            logger.debug("Flushed {}", flushed);
-        } finally {
-          lock.unlock();
-        }
       }
     }
+    return true;
   }
 
   class EventHandler extends SimpleChannelHandler {
     @Override
     public void messageReceived(ChannelHandlerContext ctx, MessageEvent e) throws Exception {
       Event line = (Event) e.getMessage();
-      if (line == null)
+      if (line == null) {
         return;
+      }
       if (isEvent(line)) {
         try {
           queue.offer(line);
@@ -106,14 +66,24 @@ public class OpenTSDBSource extends AbstractSource
         try {
           cond.signal();
           e.getChannel().write("ok\n");
-          if (logger.isDebugEnabled())
+          if (logger.isDebugEnabled()) {
             logger.debug("Waking up flusher");
+          }
         } finally {
           lock.unlock();
         }
       }
     }
   }
+
+  @Override
+  public void configure(Context context) {
+    super.configure(context);
+    Configurables.ensureRequiredNonNull(context, "port");
+    port = context.getInteger("port");
+    host = context.getString("bind");
+  }
+
 
   @Override
   public void start() {
@@ -173,35 +143,4 @@ public class OpenTSDBSource extends AbstractSource
     super.stop();
   }
 
-  private int flush() {
-    return flush(false);
-  }
-
-  private int flush(boolean force) {
-    try {
-      final List<Event> list = new ArrayList<Event>();
-      final int drained = queue.drainTo(list, batchSize);
-      getChannelProcessor().processEventBatch(list);
-      list.clear();
-      return drained;
-    } catch (ChannelException fce) {
-      if (force) {
-        logger.error("Forced to flush, but we've lost " + queue.size() +
-                " events, channel don't accepts data", fce);
-        return 0;
-      } else {
-        logger.error("Can't flush, channel don't accept our events", fce);
-        throw fce;
-      }
-    }
-  }
-
-  @Override
-  public void configure(Context context) {
-    Configurables.ensureRequiredNonNull(context, "port");
-    port = context.getInteger("port");
-    host = context.getString("bind");
-    batchSize = context.getInteger("batchSize", 100);
-    queue = new ArrayBlockingQueue<Event>(batchSize * 100);
-  }
 }
