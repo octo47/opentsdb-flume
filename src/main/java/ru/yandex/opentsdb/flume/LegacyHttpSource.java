@@ -2,7 +2,6 @@ package ru.yandex.opentsdb.flume;
 
 import com.google.common.base.Charsets;
 import com.google.common.io.LineReader;
-import com.sun.deploy.net.URLEncoder;
 import org.apache.flume.Context;
 import org.apache.flume.conf.Configurables;
 import org.apache.flume.conf.ConfigurationException;
@@ -52,7 +51,7 @@ import java.io.UnsupportedEncodingException;
 import java.net.InetSocketAddress;
 import java.net.MalformedURLException;
 import java.net.URL;
-import java.text.SimpleDateFormat;
+import java.net.URLEncoder;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
