@@ -2,6 +2,7 @@ package ru.yandex.opentsdb.flume;
 
 import com.google.common.base.Charsets;
 import com.google.common.io.LineReader;
+import com.sun.deploy.net.URLEncoder;
 import org.apache.flume.Context;
 import org.apache.flume.conf.Configurables;
 import org.apache.flume.conf.ConfigurationException;
@@ -47,9 +48,11 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
+import java.io.UnsupportedEncodingException;
 import java.net.InetSocketAddress;
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.text.SimpleDateFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -96,6 +99,22 @@ public class LegacyHttpSource extends AbstractLineEventSource {
       this.from = from;
       this.to = to;
     }
+
+    /**
+     * keep in sync with {@link MetricParser#addNumericMetric}
+     */
+    public String tsdbQueryParams() {
+      String metric = "l." + type + "." + key;
+      return "m=sum:" + metric + "&start=" + from + "&end=" + to + "&ascii";
+    }
+
+    private String urlEncode(String string) {
+      try {
+        return URLEncoder.encode(string, "UTF-8");
+      } catch (UnsupportedEncodingException e) {
+        throw new IllegalStateException(e);
+      }
+    }
   }
 
 
@@ -116,7 +135,10 @@ public class LegacyHttpSource extends AbstractLineEventSource {
 
     @Override
     public void channelConnected(ChannelHandlerContext ctx, ChannelStateEvent e) throws Exception {
-      final DefaultHttpRequest req = new DefaultHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.GET, "/q?");
+      final String query = "/q?" + this.query.tsdbQueryParams();
+      logger.debug("Sending query " + query);
+      final DefaultHttpRequest req = new DefaultHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.GET,
+              query);
       e.getChannel().write(req);
     }
 
