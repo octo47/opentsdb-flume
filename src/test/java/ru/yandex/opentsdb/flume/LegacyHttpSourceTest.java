@@ -59,7 +59,7 @@ public class LegacyHttpSourceTest {
     Assert.assertNotNull(take);
     Assert.assertEquals(
             new String(take.getBody()),
-            "put l.numeric.hostname/some/check 1337258239 3.14 ");
+            "put l.numeric.hostname/some/check 1337258239 3.14 legacy=true");
 
     transaction.commit();
     transaction.close();

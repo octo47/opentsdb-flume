@@ -419,6 +419,7 @@ public class LegacyHttpSource extends AbstractLineEventSource {
       writer.write(" ");
       writer.write(value.toString());
       writer.write(" ");
+      writer.write("legacy=true");
       writer.flush();
       queue.add(new LineBasedFrameDecoder.LineEvent(ba.toByteArray()));
     }
