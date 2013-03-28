@@ -41,26 +41,33 @@ public class LegacyHttpSourceTest {
   public SourceInterceptor source =
           new SourceInterceptor(8887, httpServer.getAddress().getHostName() + ":" + httpServer.getAddress().getPort());
 
+  String[] testRequests = new String[]{
+          "{\"TESTHOST/nobus/test\": [{\"type\": \"numeric\", \"timestamp\": 1364451167, " +
+                  "\"value\": 3.14}]}",
+          "{\"TESTHOST/nobus/test\": [{\"timestamp\": 1364451167, \"type\": \"numeric\", " +
+                  "\"value\": 3.14}]}",
+          "{\"TESTHOST/nobus/test\": [{" +
+                  "\"value\": 3.14, \"timestamp\": 1364451167, \"type\": \"numeric\" }]}"
+  };
+
   @Test
   public void postMethod() throws IOException {
-    final PostMethod post = executePost("/write", (
-            "{\n" +
-                    "   \"hostname/some/check\":[\n" +
-                    "    {\"type\":\"numeric\",\"timestamp\":1337258239,\"value\":3.14}\n" +
-                    "   ]\n" +
-                    "}"
-    ).getBytes());
-    Assert.assertEquals(post.getStatusCode(), HttpStatus.SC_OK);
-
     Transaction transaction = source.channel.getTransaction();
     transaction.begin();
-    final LineBasedFrameDecoder.LineEvent take =
-            (LineBasedFrameDecoder.LineEvent) source.channel.take();
-    Assert.assertNotNull(take);
-    Assert.assertEquals(
-            new String(take.getBody()),
-            "put l.numeric.hostname/some/check 1337258239 3.14 legacy=true");
+    for (String testRequest : testRequests) {
+      final PostMethod post = executePost("/write", (
+              testRequest
+      ).getBytes());
+      Assert.assertEquals(testRequest, post.getStatusCode(), HttpStatus.SC_OK);
 
+      final LineBasedFrameDecoder.LineEvent take =
+              (LineBasedFrameDecoder.LineEvent) source.channel.take();
+      Assert.assertNotNull(take);
+      Assert.assertEquals(
+              new String(take.getBody()),
+              "put l.numeric.TESTHOST/nobus/test 1364451167 3.14 legacy=true");
+
+    }
     transaction.commit();
     transaction.close();
   }

@@ -202,6 +202,8 @@ public class LegacyHttpSource extends AbstractLineEventSource {
                   HttpResponseStatus.BAD_REQUEST));
         }
       } catch (Exception ex) {
+        if (logger.isDebugEnabled())
+          logger.debug("Failed to process message", ex);
         HttpResponse response = new DefaultHttpResponse(
                 HttpVersion.HTTP_1_1,
                 HttpResponseStatus.INTERNAL_SERVER_ERROR);
@@ -358,7 +360,6 @@ public class LegacyHttpSource extends AbstractLineEventSource {
       nextObj:
       while (parser.nextToken() != JsonToken.END_ARRAY) {
         assert parser.getCurrentToken().equals(JsonToken.START_OBJECT);
-        parser.nextToken();
 
         String type = null;
         Long timestamp = null;
@@ -368,8 +369,15 @@ public class LegacyHttpSource extends AbstractLineEventSource {
           if (currentName.equals("type")) {
             type = parser.getText();
           } else if (currentName.equals("timestamp")) {
-            parser.nextValue();
-            timestamp = parser.getLongValue();
+            final JsonToken token = parser.nextToken();
+            switch (token) {
+              case VALUE_NUMBER_INT:
+                timestamp = parser.getLongValue();
+                break;
+              default:
+                throw new IllegalArgumentException("timestamp should be numeric"
+                        + parser.getCurrentLocation().getLineNr());
+            }
           } else if (currentName.equals("value")) {
             final JsonToken token = parser.nextToken();
             switch (token) {
