@@ -188,6 +188,8 @@ public class LegacyHttpSource extends AbstractLineEventSource {
 
   class EventHandler extends SimpleChannelHandler {
 
+    private LegacyHttpSource.MetricParser metricParser = new MetricParser();
+
     @Override
     public void messageReceived(ChannelHandlerContext ctx, MessageEvent e) throws Exception {
       try {
@@ -286,7 +288,11 @@ public class LegacyHttpSource extends AbstractLineEventSource {
         return;
       }
 
-      new MetricParser().parse(req);
+      try {
+        metricParser.parse(req);
+      } catch (IllegalArgumentException iae) {
+        logger.warn("Metric parser failed: " + iae.getMessage());
+      }
 
       HttpResponse response = new DefaultHttpResponse(
               HttpVersion.HTTP_1_1, HttpResponseStatus.OK);
