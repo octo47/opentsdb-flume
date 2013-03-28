@@ -341,10 +341,9 @@ public class LegacyHttpSource extends AbstractLineEventSource {
         parser.nextToken();
         final String metric = parser.getCurrentName();
         if (parser.nextToken() != JsonToken.START_ARRAY)
-          throw new IllegalArgumentException(
-                  "Metric " + metric + " should be an 'name':[array] at line "
-                          + parser.getCurrentLocation().getLineNr());
-        parseMetric(metric, parser);
+          parseMetricObject(metric, parser);
+        else
+          parseMetricArray(metric, parser);
         cnt++;
       }
 
@@ -356,59 +355,63 @@ public class LegacyHttpSource extends AbstractLineEventSource {
      *            ...
      *        ],
      */
-    private void parseMetric(String metric, JsonParser parser) throws IOException {
+    private void parseMetricArray(String metric, JsonParser parser) throws IOException {
       nextObj:
       while (parser.nextToken() != JsonToken.END_ARRAY) {
         assert parser.getCurrentToken().equals(JsonToken.START_OBJECT);
 
-        String type = null;
-        Long timestamp = null;
-        Double value = null;
-        while (parser.nextToken() != JsonToken.END_OBJECT) {
-          final String currentName = parser.getCurrentName();
-          if (currentName.equals("type")) {
-            type = parser.getText();
-          } else if (currentName.equals("timestamp")) {
-            final JsonToken token = parser.nextToken();
-            switch (token) {
-              case VALUE_NUMBER_INT:
-                timestamp = parser.getLongValue();
-                break;
-              default:
-                throw new IllegalArgumentException("timestamp should be numeric"
-                        + parser.getCurrentLocation().getLineNr());
-            }
-          } else if (currentName.equals("value")) {
-            final JsonToken token = parser.nextToken();
-            switch (token) {
-              case VALUE_NUMBER_FLOAT:
-                value = parser.getDoubleValue();
-                break;
-              case VALUE_NUMBER_INT:
-                value = (double) parser.getLongValue();
-                break;
-              default:
-                // unknown point encountered, skip it as a whole
-                parser.skipChildren();
-                continue nextObj;
-            }
-          }
-        } // end while(parser.nextToken() != JsonToken.END_OBJECT))
-        if (type == null || timestamp == null)
-          throw new IllegalArgumentException("Metric " + metric + " expected " +
-                  "to have 'type','timestamp' and 'value' at line "
-                  + parser.getCurrentLocation().getLineNr());
-
-        if (type.equals("numeric")) {
-          if (value == null)
-            throw new IllegalArgumentException("Metric " + metric + " expected " +
-                    "to have 'type','timestamp' and 'value' at line "
-                    + parser.getCurrentLocation().getLineNr());
-          addNumericMetric(metric, type, timestamp, value);
-        }
+        parseMetricObject(metric, parser);
         // ignore unknown format
       }
 
+    }
+
+    private void parseMetricObject(String metric, JsonParser parser) throws IOException {
+      String type = null;
+      Long timestamp = null;
+      Double value = null;
+      while (parser.nextToken() != JsonToken.END_OBJECT) {
+        final String currentName = parser.getCurrentName();
+        if (currentName.equals("type")) {
+          type = parser.getText();
+        } else if (currentName.equals("timestamp")) {
+          final JsonToken token = parser.nextToken();
+          switch (token) {
+            case VALUE_NUMBER_INT:
+              timestamp = parser.getLongValue();
+              break;
+            default:
+              throw new IllegalArgumentException("timestamp should be numeric"
+                      + parser.getCurrentLocation().getLineNr());
+          }
+        } else if (currentName.equals("value")) {
+          final JsonToken token = parser.nextToken();
+          switch (token) {
+            case VALUE_NUMBER_FLOAT:
+              value = parser.getDoubleValue();
+              break;
+            case VALUE_NUMBER_INT:
+              value = (double) parser.getLongValue();
+              break;
+            default:
+              // unknown point encountered, skip it as a whole
+              parser.skipChildren();
+              return;
+          }
+        }
+      } // end while(parser.nextToken() != JsonToken.END_OBJECT))
+      if (type == null || timestamp == null)
+        throw new IllegalArgumentException("Metric " + metric + " expected " +
+                "to have 'type','timestamp' and 'value' at line "
+                + parser.getCurrentLocation().getLineNr());
+
+      if (type.equals("numeric")) {
+        if (value == null)
+          throw new IllegalArgumentException("Metric " + metric + " expected " +
+                  "to have 'type','timestamp' and 'value' at line "
+                  + parser.getCurrentLocation().getLineNr());
+        addNumericMetric(metric, type, timestamp, value);
+      }
     }
 
     private void addNumericMetric(String metric, String type, Long timestamp, Double value)
