@@ -61,15 +61,10 @@ public class OpenTSDBSource extends AbstractLineEventSource {
           logger.error("Error putting event to queue, event dropped", ex);
         }
       } else {
-        lock.lock();
-        try {
-          cond.signal();
-          e.getChannel().write("ok\n");
-          if (logger.isDebugEnabled()) {
-            logger.debug("Waking up flusher");
-          }
-        } finally {
-          lock.unlock();
+        signalWaiters();
+        e.getChannel().write("ok\n");
+        if (logger.isDebugEnabled()) {
+          logger.debug("Waking up flusher");
         }
       }
     }
@@ -108,9 +103,6 @@ public class OpenTSDBSource extends AbstractLineEventSource {
     } else {
       nettyChannel = serverBootstrap.bind(new InetSocketAddress(host, port));
     }
-    flushThread = new Thread(new MyFlusher());
-    flushThread.setDaemon(false);
-    flushThread.start();
     super.start();
   }
 
@@ -118,6 +110,8 @@ public class OpenTSDBSource extends AbstractLineEventSource {
   public void stop() {
     logger.info("OpenTSDB Source stopping...");
     logger.info("Metrics:{}", counterGroup);
+
+    super.stop();
 
     if (nettyChannel != null) {
       nettyChannel.close();
@@ -130,16 +124,6 @@ public class OpenTSDBSource extends AbstractLineEventSource {
       }
     }
 
-    flushThread.interrupt();
-    try {
-      flushThread.join();
-    } catch (InterruptedException e) {
-    }
-    while (true) {
-      if ((flush(true) == 0)) break;
-    }
-
-    super.stop();
   }
 
 }

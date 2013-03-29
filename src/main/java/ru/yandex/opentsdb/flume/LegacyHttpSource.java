@@ -489,14 +489,12 @@ public class LegacyHttpSource extends AbstractLineEventSource {
     } else {
       nettyChannel = bootstrap.bind(new InetSocketAddress(host, port));
     }
-    flushThread = new Thread(new MyFlusher());
-    flushThread.setDaemon(false);
-    flushThread.start();
     super.start();
   }
 
   @Override
   public void stop() {
+    super.stop();
     logger.info("HTTP Source stopping...");
     logger.info("Metrics:{}", counterGroup);
 
@@ -511,19 +509,9 @@ public class LegacyHttpSource extends AbstractLineEventSource {
       }
     }
 
-    flushThread.interrupt();
-    try {
-      flushThread.join();
-    } catch (InterruptedException e) {
-    }
-    while (true) {
-      if ((flush(true) == 0)) break;
-    }
 
     bossExecutor.shutdown();
     workerExecutor.shutdown();
-
-    super.stop();
   }
 
 }
