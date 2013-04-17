@@ -140,8 +140,9 @@ public class AbstractLineEventSource
     queue = new ArrayBlockingQueue<LineBasedFrameDecoder.LineEvent>(batchSize * 100);
   }
 
-  protected void signalWaiters() {
-    lock.lock();
+  protected void signalWaiters() throws InterruptedException {
+    if (!lock.tryLock(1, TimeUnit.MILLISECONDS))
+      return;
     try {
       cond.signal();
     } finally {
