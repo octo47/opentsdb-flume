@@ -12,6 +12,7 @@ import org.apache.flume.Event;
 import org.apache.flume.EventDeliveryException;
 import org.apache.flume.Transaction;
 import org.apache.flume.conf.Configurable;
+import org.apache.flume.instrumentation.ChannelCounter;
 import org.apache.flume.instrumentation.SinkCounter;
 import org.apache.flume.lifecycle.LifecycleState;
 import org.apache.flume.sink.AbstractSink;
@@ -54,6 +55,7 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
 
 
   private SinkCounter sinkCounter;
+  private ChannelCounter channelCounter;
   private int batchSize;
 
   private TSDB tsdb;
@@ -211,6 +213,14 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
       };
     }
 
+    static Comparator<EventData> orderByTimestamp() {
+      return new Comparator<EventData>() {
+        public int compare(EventData o1, EventData o2) {
+          return (o1.timestamp < o2.timestamp) ? -1 : (o1.timestamp == o2.timestamp ? 0 : 1);
+        }
+      };
+    }
+
     @Override
     public String toString() {
       return "EventData{" +
@@ -230,13 +240,12 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
    * @param event what to parse
    * @return constructed EventData
    */
-  private EventData parseEvent(Event event) {
-    final int idx = eventBodyStart(event);
+  private EventData parseEvent(final byte[] body) {
+    final int idx = eventBodyStart(body);
     if (idx == -1) {
       logger.error("empty event");
       return null;
     }
-    final byte[] body = event.getBody();
     final String[] words = Tags.splitString(
             new String(body, idx, body.length - idx, UTF8), ' ');
     final String metric = words[0];
@@ -332,6 +341,7 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
     return new Callable<Long>() {
       @Override
       public Long call() throws Exception {
+
         long total = 0;
         ArrayList<EventData> datas = new ArrayList<EventData>(batchSize);
         final State state = new State();
@@ -339,16 +349,20 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
         Event event;
         try {
           transaction.begin();
+          long stime = System.currentTimeMillis();
           while ((event = channel.take()) != null && datas.size() < batchSize) {
             if (state.failure != null)
               throw Throwables.propagate(state.failure);
 
             try {
-              final EventData eventData = parseEvent(event);
-              if (eventData == null)
-                continue;
+              BatchEvent be = new BatchEvent(event.getBody());
+              for (byte[] body : be) {
+                final EventData eventData = parseEvent(body);
+                if (eventData == null)
+                  continue;
 
-              datas.add(eventData);
+                datas.add(eventData);
+              }
             } catch (Exception e) {
               continue;
             }
@@ -356,9 +370,13 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
           final int size = datas.size();
           next.put(size);
           total += size;
+          channelCounter.addToEventTakeSuccessCount(size);
+          if (size > 0)
+            logger.info("Batch created with " + size + " events in " + (System.currentTimeMillis() - stime) + "ms");
           if (size == 1) {
             state.writeDataPoints(datas);
           } else if (size > 0) {
+            stime = System.currentTimeMillis();
             // sort incoming datapoints, tsdb doesn't like unordered
             Collections.sort(datas, EventData.orderBySeriesAndTimestamp());
             int start = 0;
@@ -371,13 +389,15 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
             }
             state.writeDataPoints(datas.subList(start, size));
 
-            // trigger flush
-            tsdb.flush();
+          }
+          if (size > 0) {
             // and wait, until all our inflight deferred will complete
             state.join();
             sinkCounter.incrementBatchCompleteCount();
             if (size < batchSize)
               sinkCounter.incrementBatchUnderflowCount();
+            channelCounter.addToEventPutSuccessCount(size);
+            logger.info("Batch written with " + size + " events in " + (System.currentTimeMillis() - stime) + "ms");
           }
           transaction.commit();
         } catch (Throwable t) {
@@ -394,9 +414,8 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
 
   private byte[] PUT = {'p', 'u', 't'};
 
-  public int eventBodyStart(Event event) {
+  public int eventBodyStart(final byte[] body) {
     int idx = 0;
-    final byte[] body = event.getBody();
     for (byte b : PUT) {
       if (body[idx++] != b)
         return -1;
@@ -414,6 +433,8 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
   @Override
   public void configure(Context context) {
     sinkCounter = new SinkCounter(getName());
+    channelCounter = new ChannelCounter(getName());
+
     batchSize = context.getInteger("batchSize", 100);
     zkquorum = context.getString("zkquorum");
     zkpath = context.getString("zkpath", "/hbase");

@@ -13,7 +13,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
@@ -32,7 +31,7 @@ public class AbstractLineEventSource
   private static final Logger logger = LoggerFactory
           .getLogger(AbstractLineEventSource.class);
 
-  protected BlockingQueue<LineBasedFrameDecoder.LineEvent> queue;
+  protected BlockingQueue<byte[]> queue;
   protected CounterGroup counterGroup = new CounterGroup();
   private Lock lock = new ReentrantLock();
   private Condition cond = lock.newCondition();
@@ -45,36 +44,28 @@ public class AbstractLineEventSource
   }
 
   protected synchronized int flush(boolean force) {
-    boolean slow = false;
-    final List<Event> list = new ArrayList<Event>();
-    final int drained = queue.drainTo(list, batchSize);
-    if (drained == 0)
-      return drained;
-    logger.debug("Events taken from queue " + drained);
+    int drained = 0;
+    while (!closed) {
+      final List<byte[]> list = new ArrayList<byte[]>();
+      drained = queue.drainTo(list, batchSize);
+      if (drained == 0)
+        break;
+      logger.debug("Events taken from queue " + drained);
 
-    while (!closed && list.size() > 0) {
-      try {
-        if (slow) {
-          logger.debug("Slow insert of " + list.size() + " events");
-          final Iterator<Event> it = list.iterator();
-          while (it.hasNext()) {
-            getChannelProcessor().processEvent(it.next());
-            it.remove();
-          }
-        } else {
+      while (!closed && list.size() > 0) {
+        try {
+          final BatchEvent batchEvent = BatchEvent.encodeBatch(list);
           logger.debug("Bulk insert " + list.size() + " events");
-          getChannelProcessor().processEventBatch(list);
-        }
-        list.clear();
-      } catch (ChannelException fce) {
-        if (force) {
-          logger.error("Forced to flush, but we've lost " + list.size() +
-                  " events, channel don't accepts data:" + fce.getMessage());
+          getChannelProcessor().processEvent(batchEvent);
           list.clear();
-        } else {
-          dropChannelsHead(list.size());
-          if (!slow)
-            slow = true;
+        } catch (ChannelException fce) {
+          if (force) {
+            logger.error("Forced to flush, but we've lost " + list.size() +
+                    " events, channel don't accepts data:" + fce.getMessage());
+            list.clear();
+          } else {
+            dropChannelsHead(1);
+          }
         }
       }
     }
@@ -106,7 +97,7 @@ public class AbstractLineEventSource
     }
   }
 
-  void offer(LineBasedFrameDecoder.LineEvent e) {
+  void offer(byte[] e) {
     queue.offer(e);
   }
 
@@ -137,7 +128,7 @@ public class AbstractLineEventSource
   @Override
   public void configure(Context context) {
     batchSize = context.getInteger("batchSize", 100);
-    queue = new ArrayBlockingQueue<LineBasedFrameDecoder.LineEvent>(batchSize * 100);
+    queue = new ArrayBlockingQueue<byte[]>(batchSize * 100);
   }
 
   protected void signalWaiters() throws InterruptedException {

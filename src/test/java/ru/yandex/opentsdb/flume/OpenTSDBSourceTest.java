@@ -43,7 +43,8 @@ public class OpenTSDBSourceTest {
       public Integer apply(@Nullable Transaction input) {
         // fill up buffer
         for (int i = 0; i < CHANNEL_SIZE; i++) {
-          source.channel.put(makeSeqEvent());
+          source.channel.put(
+                  BatchEvent.encodeBatch(Lists.newArrayList(makeSeqEvent())));
         }
         return CHANNEL_SIZE;
       }
@@ -77,10 +78,9 @@ public class OpenTSDBSourceTest {
     Assert.assertNull(e);
   }
 
-  private LineBasedFrameDecoder.LineEvent makeSeqEvent() {
-    return new LineBasedFrameDecoder.LineEvent(
-            ("put metric.me 123412354 host=fff tag=fff " + source.cnt.incrementAndGet()).getBytes()
-    );
+  private byte[] makeSeqEvent() {
+    return
+            ("put metric.me 123412354 host=fff tag=fff " + source.cnt.incrementAndGet()).getBytes();
   }
 
   private <R> R doInTx(Function<Transaction, R> function) {

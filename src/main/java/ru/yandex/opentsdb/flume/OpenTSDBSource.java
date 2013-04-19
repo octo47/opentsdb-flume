@@ -56,7 +56,7 @@ public class OpenTSDBSource extends AbstractLineEventSource {
       }
       if (isEvent(line)) {
         try {
-          queue.offer(line);
+          queue.offer(line.getBody());
         } catch (ChannelException ex) {
           logger.error("Error putting event to queue, event dropped", ex);
         }

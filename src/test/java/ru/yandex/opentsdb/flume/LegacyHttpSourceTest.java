@@ -53,7 +53,7 @@ public class LegacyHttpSourceTest {
   };
 
   @Test
-  public void postMethod() throws IOException {
+  public void postMethod() throws IOException, InterruptedException {
     Transaction transaction = source.channel.getTransaction();
     transaction.begin();
     for (String testRequest : testRequests) {
@@ -61,17 +61,20 @@ public class LegacyHttpSourceTest {
               testRequest
       ).getBytes());
       Assert.assertEquals(testRequest, post.getStatusCode(), HttpStatus.SC_OK);
-
-      final LineBasedFrameDecoder.LineEvent take =
-              (LineBasedFrameDecoder.LineEvent) source.channel.take();
-      Assert.assertNotNull(take);
-      Assert.assertEquals(
-              new String(take.getBody()),
-              "put l.numeric.TESTHOST/nobus/test 1364451167 3.14 legacy=true");
-
     }
     transaction.commit();
     transaction.close();
+    Thread.sleep(500);
+    final Transaction tx2 = source.channel.getTransaction();
+    tx2.begin();
+    final BatchEvent take =
+            (BatchEvent) source.channel.take();
+    Assert.assertNotNull(take);
+    Assert.assertEquals(
+            new String(take.iterator().next()),
+            "put l.numeric.TESTHOST/nobus/test 1364451167 3.14 legacy=true");
+    tx2.commit();
+    tx2.close();;
   }
 
   @Test
