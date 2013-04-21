@@ -449,6 +449,8 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
             zkquorum, zkpath, seriesTable, uidsTable, batchSize));
     hbaseClient = new HBaseClient(zkquorum, zkpath);
     tsdb = new TSDB(hbaseClient, seriesTable, uidsTable);
+    channelCounter.start();
+    sinkCounter.start();
     super.start();
   }
 
@@ -463,6 +465,8 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
         logger.error("Can't shutdown tsdb", e);
         throw Throwables.propagate(e);
       }
+    channelCounter.stop();
+    sinkCounter.stop();
     super.stop();
   }
 }

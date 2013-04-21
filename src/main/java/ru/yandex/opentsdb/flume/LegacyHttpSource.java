@@ -496,7 +496,6 @@ public class LegacyHttpSource extends AbstractLineEventSource {
   public void stop() {
     super.stop();
     logger.info("HTTP Source stopping...");
-    logger.info("Metrics:{}", counterGroup);
 
     if (nettyChannel != null) {
       nettyChannel.close();

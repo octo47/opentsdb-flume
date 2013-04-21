@@ -32,7 +32,6 @@ public class AbstractLineEventSource
           .getLogger(AbstractLineEventSource.class);
 
   protected BlockingQueue<byte[]> queue;
-  protected CounterGroup counterGroup = new CounterGroup();
   private Lock lock = new ReentrantLock();
   private Condition cond = lock.newCondition();
   private Thread flushThread;

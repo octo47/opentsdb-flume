@@ -109,7 +109,6 @@ public class OpenTSDBSource extends AbstractLineEventSource {
   @Override
   public void stop() {
     logger.info("OpenTSDB Source stopping...");
-    logger.info("Metrics:{}", counterGroup);
 
     super.stop();
 
