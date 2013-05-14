@@ -185,7 +185,7 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
 
     public EventData(String seriesKey, String metric, long timestamp, String value, HashMap<String, String> tags) {
       this.seriesKey = seriesKey;
-      this.metric = metric;
+      this.metric = metric.replace('@', '_'); // FIXME: Workaround for opentsdb regarding the '@' symbol as invalid
       this.timestamp = timestamp;
       this.value = value;
       this.tags = tags;
