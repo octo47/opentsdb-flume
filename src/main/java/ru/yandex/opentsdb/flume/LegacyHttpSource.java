@@ -43,11 +43,7 @@ import org.jboss.netty.handler.codec.http.QueryStringDecoder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
-import java.io.UnsupportedEncodingException;
+import java.io.*;
 import java.net.InetSocketAddress;
 import java.net.MalformedURLException;
 import java.net.URL;
@@ -339,13 +335,14 @@ public class LegacyHttpSource extends AbstractLineEventSource {
 
   class MetricParser {
 
+
     public void parse(HttpRequest req) throws IOException {
-      final JsonParser parser = jsonFactory.createJsonParser(
-              new ChannelBufferInputStream(
-                      req.getContent()));
+
+      final JsonParser parser = jsonFactory.createJsonParser(new ChannelBufferInputStream(req.getContent()));
+
+      parser.nextToken(); // Skip the wrapper
 
       while (parser.nextToken() != JsonToken.END_OBJECT) {
-        parser.nextToken();
 
         final String metric = parser.getCurrentName();
 
@@ -359,7 +356,6 @@ public class LegacyHttpSource extends AbstractLineEventSource {
           }
         } else {
           logger.warn("Illegal token: expected {} or {}, but was {}: {}", new Object[] {JsonToken.START_OBJECT, JsonToken.START_ARRAY, currentToken, parser.getText()});
-
         }
       }
     }
