@@ -49,6 +49,8 @@ public class LegacyHttpSourceTest {
           "{\"TESTHOST/nobus/test\": [{" +
                   "\"value\": 3.14, \"timestamp\": 1364451167, \"type\": \"numeric\" }]}",
           "{\"TESTHOST/nobus/test\": {" +
+                  "\"value\": 3.14, \"timestamp\": 1364451167, \"type\": \"numeric\" }," +
+           "\"TESTHOST/nobus/test\": {" +
                   "\"value\": 3.14, \"timestamp\": 1364451167, \"type\": \"numeric\" }}",
           "{\"TESTHOST/nobus/test\": [\"sinister string\"] }",
           "{\"TESTHOST/nobus/test\": \"sinister string\" }"

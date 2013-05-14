@@ -43,7 +43,11 @@ import org.jboss.netty.handler.codec.http.QueryStringDecoder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.*;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.io.UnsupportedEncodingException;
 import java.net.InetSocketAddress;
 import java.net.MalformedURLException;
 import java.net.URL;
@@ -338,7 +342,8 @@ public class LegacyHttpSource extends AbstractLineEventSource {
 
     public void parse(HttpRequest req) throws IOException {
 
-      final JsonParser parser = jsonFactory.createJsonParser(new ChannelBufferInputStream(req.getContent()));
+      final JsonParser parser = jsonFactory.createJsonParser(
+              new ChannelBufferInputStream(req.getContent()));
 
       parser.nextToken(); // Skip the wrapper
 
@@ -355,7 +360,8 @@ public class LegacyHttpSource extends AbstractLineEventSource {
               logger.warn("{} illegal tokens encountered", illegalTokens);
           }
         } else {
-          logger.warn("Illegal token: expected {} or {}, but was {}: {}", new Object[] {JsonToken.START_OBJECT, JsonToken.START_ARRAY, currentToken, parser.getText()});
+          logger.warn("Illegal token: expected {} or {}, but was {}: {}",new Object[] {
+                  JsonToken.START_OBJECT, JsonToken.START_ARRAY, currentToken, parser.getText()});
         }
       }
     }
@@ -373,7 +379,8 @@ public class LegacyHttpSource extends AbstractLineEventSource {
       while ((currentToken = parser.nextToken()) != JsonToken.END_ARRAY) {
 
         if(!currentToken.equals(JsonToken.START_OBJECT)) {
-            logger.warn("Illegal token: expected {}, but was {}: {}", new Object[] {JsonToken.START_OBJECT, currentToken, parser.getText()});
+            logger.warn("Illegal token: expected {}, but was {}: {}",
+                    new Object[] {JsonToken.START_OBJECT, currentToken, parser.getText()});
             illegalTokens++;
         } else {
             parseMetricObject(metric, parser);
