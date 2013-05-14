@@ -50,8 +50,8 @@ public class LegacyHttpSourceTest {
                   "\"value\": 3.14, \"timestamp\": 1364451167, \"type\": \"numeric\" }]}",
           "{\"TESTHOST/nobus/test\": {" +
                   "\"value\": 3.14, \"timestamp\": 1364451167, \"type\": \"numeric\" }}",
-          "{\"TESTHOST/nobus/test\": [\"\"] }",
-          "{\"TESTHOST/nobus/test\": \"\" }"
+          "{\"TESTHOST/nobus/test\": [\"sinister string\"] }",
+          "{\"TESTHOST/nobus/test\": \"sinister string\" }"
   };
 
   @Test
@@ -76,7 +76,7 @@ public class LegacyHttpSourceTest {
             new String(take.iterator().next()),
             "put l.numeric.TESTHOST/nobus/test 1364451167 3.14 legacy=true");
     tx2.commit();
-    tx2.close();;
+    tx2.close();
   }
 
   @Test

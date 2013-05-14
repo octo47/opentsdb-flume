@@ -338,8 +338,9 @@ public class LegacyHttpSource extends AbstractLineEventSource {
   }
 
   class MetricParser {
+
     public void parse(HttpRequest req) throws IOException {
-        final JsonParser parser = jsonFactory.createJsonParser(
+      final JsonParser parser = jsonFactory.createJsonParser(
               new ChannelBufferInputStream(
                       req.getContent()));
 
@@ -357,7 +358,8 @@ public class LegacyHttpSource extends AbstractLineEventSource {
               logger.warn("{} illegal tokens encountered", illegalTokens);
           }
         } else {
-          logger.warn("Illegal token: expected {} or {}, but was {}", new Object[] {JsonToken.START_OBJECT, JsonToken.START_ARRAY, currentToken});
+          logger.warn("Illegal token: expected {} or {}, but was {}: {}", new Object[] {JsonToken.START_OBJECT, JsonToken.START_ARRAY, currentToken, parser.getText()});
+
         }
       }
     }
@@ -375,7 +377,7 @@ public class LegacyHttpSource extends AbstractLineEventSource {
       while ((currentToken = parser.nextToken()) != JsonToken.END_ARRAY) {
 
         if(!currentToken.equals(JsonToken.START_OBJECT)) {
-            logger.warn("Illegal token: expected {}, but was {}", JsonToken.START_OBJECT, currentToken);
+            logger.warn("Illegal token: expected {}, but was {}: {}", new Object[] {JsonToken.START_OBJECT, currentToken, parser.getText()});
             illegalTokens++;
         } else {
             parseMetricObject(metric, parser);
