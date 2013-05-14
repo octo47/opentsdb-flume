@@ -339,20 +339,27 @@ public class LegacyHttpSource extends AbstractLineEventSource {
 
   class MetricParser {
     public void parse(HttpRequest req) throws IOException {
-      final JsonParser parser = jsonFactory.createJsonParser(
+        final JsonParser parser = jsonFactory.createJsonParser(
               new ChannelBufferInputStream(
                       req.getContent()));
-      int cnt = 0;
+
       while (parser.nextToken() != JsonToken.END_OBJECT) {
         parser.nextToken();
-        final String metric = parser.getCurrentName();
-        if (parser.nextToken() != JsonToken.START_ARRAY)
-          parseMetricObject(metric, parser);
-        else
-          parseMetricArray(metric, parser);
-        cnt++;
-      }
 
+        final String metric = parser.getCurrentName();
+
+        JsonToken currentToken = parser.nextToken();
+        if (currentToken == JsonToken.START_OBJECT) {
+          parseMetricObject(metric, parser);
+        } else if (currentToken == JsonToken.START_ARRAY) {
+          int illegalTokens = parseMetricArray(metric, parser);
+          if(illegalTokens > 0) {
+              logger.warn("{} illegal tokens encountered", illegalTokens);
+          }
+        } else {
+          logger.warn("Illegal token: expected {} or {}, but was {}", new Object[] {JsonToken.START_OBJECT, JsonToken.START_ARRAY, currentToken});
+        }
+      }
     }
 
     /*
@@ -361,15 +368,22 @@ public class LegacyHttpSource extends AbstractLineEventSource {
      *            ...
      *        ],
      */
-    private void parseMetricArray(String metric, JsonParser parser) throws IOException {
-      nextObj:
-      while (parser.nextToken() != JsonToken.END_ARRAY) {
-        assert parser.getCurrentToken().equals(JsonToken.START_OBJECT);
+    private int parseMetricArray(String metric, JsonParser parser) throws IOException {
+      JsonToken currentToken;
+      int illegalTokens = 0;
 
-        parseMetricObject(metric, parser);
-        // ignore unknown format
+      while ((currentToken = parser.nextToken()) != JsonToken.END_ARRAY) {
+
+        if(!currentToken.equals(JsonToken.START_OBJECT)) {
+            logger.warn("Illegal token: expected {}, but was {}", JsonToken.START_OBJECT, currentToken);
+            illegalTokens++;
+        } else {
+            parseMetricObject(metric, parser);
+        }
+
       }
 
+      return illegalTokens;
     }
 
     private void parseMetricObject(String metric, JsonParser parser) throws IOException {
