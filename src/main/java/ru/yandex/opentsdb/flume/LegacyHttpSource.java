@@ -77,6 +77,12 @@ public class LegacyHttpSource extends AbstractLineEventSource {
   private static final Logger logger = LoggerFactory
           .getLogger(LegacyHttpSource.class);
 
+  private static final Integer DEFAULT_HTTP_CHUNK_SIZE = 10 * 1024 * 1024;
+  private static final Integer DEFAULT_CHILD_BUFFER_SIZE = 1024 * 1024;
+
+  private int maxChunkSize;
+  private int childSendBufferSize;
+  private int childRecieveBufferSize;
   private String host;
   private int port;
   private Channel nettyChannel;
@@ -468,6 +474,14 @@ public class LegacyHttpSource extends AbstractLineEventSource {
     Configurables.ensureRequiredNonNull(context, "port");
     port = context.getInteger("port");
     host = context.getString("bind");
+
+    maxChunkSize = context.getInteger("netty.max.http.chunk.size", DEFAULT_HTTP_CHUNK_SIZE);
+
+    childSendBufferSize = context.getInteger("netty.child.sendBufferSize",
+            DEFAULT_CHILD_BUFFER_SIZE);
+    childRecieveBufferSize = context.getInteger("netty.child.recieveBufferSize",
+            DEFAULT_CHILD_BUFFER_SIZE);
+
     try {
       tsdbUrl = new URL(context.getString("tsdb.url"));
     } catch (MalformedURLException e) {
@@ -493,7 +507,7 @@ public class LegacyHttpSource extends AbstractLineEventSource {
       public ChannelPipeline getPipeline() throws Exception {
         final ChannelPipeline pipeline = Channels.pipeline(new HttpServerCodec());
         pipeline.addLast("decoder", new HttpRequestDecoder());
-        pipeline.addLast("aggregator", new HttpChunkAggregator(1048576));
+        pipeline.addLast("aggregator", new HttpChunkAggregator(maxChunkSize));
         pipeline.addLast("encoder", new HttpResponseEncoder());
         pipeline.addLast("handler", new EventHandler());
         return pipeline;
@@ -501,6 +515,8 @@ public class LegacyHttpSource extends AbstractLineEventSource {
     });
     bootstrap.setOption("child.tcpNoDelay", true);
     bootstrap.setOption("child.keepAlive", true);
+    bootstrap.setOption("child.sendBufferSize", childSendBufferSize);
+    bootstrap.setOption("child.receiveBufferSize", childRecieveBufferSize);
     logger.info("HTTP Source starting...");
 
     if (host == null) {
