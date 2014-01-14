@@ -407,7 +407,7 @@ public class OpenTSDBSink2 extends AbstractSink implements Configurable {
     zkpath = context.getString("zkpath", "/hbase");
     seriesTable = context.getString("table.main", "tsdb");
     uidsTable = context.getString("table.uids", "tsdb-uid");
-    statesPermitted = new Semaphore(context.getInteger("states", 1000));
+    statesPermitted = new Semaphore(context.getInteger("states", 50));
     pointsCounter = Metrics.registry.newMeter(this.getClass(), "write", "points", TimeUnit.SECONDS);
   }
 
