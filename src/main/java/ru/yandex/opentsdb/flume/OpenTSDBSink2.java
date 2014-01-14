@@ -373,7 +373,7 @@ public class OpenTSDBSink2 extends AbstractSink implements Configurable {
       public Void call(State state) throws Exception {
         statesPermitted.release();
         logger.info("Batch finished with " + state.count() + " events in " + (System.currentTimeMillis() -
-                state.stime) + "ms");
+                state.stime) + "ms " + statesPermitted.availablePermits() + " permits now");
         return null;
       }
     };
