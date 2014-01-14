@@ -3,6 +3,9 @@ package ru.yandex.opentsdb.flume;
 import com.google.common.base.Throwables;
 import com.stumbleupon.async.Callback;
 import com.stumbleupon.async.Deferred;
+import com.yammer.metrics.core.Gauge;
+import com.yammer.metrics.core.Meter;
+import com.yammer.metrics.core.MetricsRegistry;
 import net.opentsdb.core.TSDB;
 import net.opentsdb.core.Tags;
 import net.opentsdb.core.WritableDataPoints;
@@ -36,11 +39,14 @@ import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Sink, capable to do writes into opentsdb.
@@ -53,7 +59,6 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
   private final Logger logger = LoggerFactory.getLogger(OpenTSDBSink.class);
   public static final Charset UTF8 = Charset.forName("UTF-8");
 
-
   private SinkCounter sinkCounter;
   private ChannelCounter channelCounter;
   private int batchSize;
@@ -65,6 +70,7 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
   private String seriesTable;
   private String uidsTable;
   private int parallel;
+  private Meter pointsCounter;
 
   /**
    * State object holds result of asynchronous operations.
@@ -75,7 +81,8 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
   private class State implements Callback<Object, Exception> {
     volatile boolean throttle = false;
     volatile Exception failure;
-    private List<Deferred> inFlight = new ArrayList<Deferred>(batchSize);
+    private AtomicInteger inFlight = new AtomicInteger(0);
+    private Semaphore signal = new Semaphore(0);
 
     public Object call(final Exception arg) {
       if (arg instanceof PleaseThrottleException) {
@@ -114,10 +121,19 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
           prevTs = eventData.timestamp;
           final Deferred<Object> d =
                   eventData.makeDeferred(dataPoints, this);
+          d.addCallback(new Callback<Object, Object>() {
+            @Override
+            public Object call(Object o) throws Exception {
+              pointsCounter.mark();
+              inFlight.decrementAndGet();
+              signal.release();
+              return null;
+            }
+          });
           d.addErrback(this);
           if (throttle)
             throttle(d);
-          inFlight.add(d);
+          inFlight.incrementAndGet();
           sinkCounter.incrementEventDrainSuccessCount();
         } catch (IllegalArgumentException ie) {
           failures.add(ie.getMessage());
@@ -134,12 +150,9 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
      * @throws Exception
      */
     private void join() throws Exception {
-      for (Deferred deferred : inFlight) {
-        if (throttle) {
-          throttle(deferred);
-        } else {
-          deferred.join();
-        }
+      while (inFlight.get() != 0) {
+        signal.acquire();
+        int complete = signal.drainPermits();
       }
     }
 
@@ -371,8 +384,6 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
           next.put(size);
           total += size;
           channelCounter.addToEventTakeSuccessCount(size);
-          if (size > 0)
-            logger.info("Batch created with " + size + " events in " + (System.currentTimeMillis() - stime) + "ms");
           if (size == 1) {
             state.writeDataPoints(datas);
           } else if (size > 0) {
@@ -391,6 +402,7 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
 
           }
           if (size > 0) {
+            logger.info("Ready to wait for " + size + " events, prepared in " + (System.currentTimeMillis() - stime) + "ms");
             // and wait, until all our inflight deferred will complete
             state.join();
             sinkCounter.incrementBatchCompleteCount();
@@ -441,6 +453,7 @@ public class OpenTSDBSink extends AbstractSink implements Configurable {
     seriesTable = context.getString("table.main", "tsdb");
     uidsTable = context.getString("table.uids", "tsdb-uid");
     parallel = context.getInteger("parallel", Runtime.getRuntime().availableProcessors() / 2 + 1);
+    pointsCounter = Metrics.registry.newMeter(this.getClass(), "write", "points", TimeUnit.SECONDS);
   }
 
   @Override
