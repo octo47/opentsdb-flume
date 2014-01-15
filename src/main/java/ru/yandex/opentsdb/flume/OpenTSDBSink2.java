@@ -97,7 +97,6 @@ public class OpenTSDBSink2 extends AbstractSink implements Configurable {
         return null;
       } else if (arg instanceof Exception) {
         int now = inFlight.decrementAndGet();
-        logger.error("Failed event", arg);
         if (callback != null && now == 0)
           callback.call(this);
         failure = (Exception) arg;
@@ -120,8 +119,6 @@ public class OpenTSDBSink2 extends AbstractSink implements Configurable {
         return;
       inFlight.incrementAndGet(); // hack for not complete before we push all points
       try {
-        for (EventData eventData : data) {
-        }
         Set<String> failures = new HashSet<String>();
         long prevTs = data.get(0).timestamp;
         for (EventData eventData : data) {
@@ -374,6 +371,8 @@ public class OpenTSDBSink2 extends AbstractSink implements Configurable {
         statesPermitted.release();
         logger.info("Batch finished with " + state.count() + " events in " + (System.currentTimeMillis() -
                 state.stime) + "ms " + statesPermitted.availablePermits() + " permits now");
+        if (state.failure != null)
+          logger.error("Batch finished with most recent exception", state.failure);
         return null;
       }
     };
