@@ -93,20 +93,17 @@ public class OpenTSDBSink2 extends AbstractSink implements Configurable {
         final HBaseRpc rpc = e.getFailedRpc();
         if (rpc instanceof PutRequest) {
           hbaseClient.put((PutRequest) rpc);  // Don't lose edits.
+          return null;
         }
-        return null;
       } else if (arg instanceof Exception) {
-        int now = inFlight.decrementAndGet();
-        if (callback != null && now == 0)
-          callback.call(this);
         failure = (Exception) arg;
       } else {
         pointsCounter.mark();
-        int now = inFlight.decrementAndGet();
-        if (callback != null && now == 0)
-          callback.call(this);
       }
-      return arg;
+      int now = inFlight.decrementAndGet();
+      if (callback != null && now == 0)
+        callback.call(this);
+      return null;
     }
 
     /**
