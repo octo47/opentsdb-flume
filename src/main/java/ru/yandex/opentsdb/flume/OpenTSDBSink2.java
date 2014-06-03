@@ -118,12 +118,15 @@ public class OpenTSDBSink2 extends AbstractSink implements Configurable {
       try {
         Set<String> failures = new HashSet<String>();
         long prevTs = data.get(0).timestamp;
+        String prevKey = data.get(0).seriesKey;
         for (EventData eventData : data) {
           try {
-            if (eventData.timestamp == prevTs)
+            if (prevKey.equals(eventData.seriesKey) &&
+                    eventData.timestamp == prevTs)
               continue;
             sinkCounter.incrementEventDrainAttemptCount();
             prevTs = eventData.timestamp;
+            prevKey = eventData.seriesKey;
             final Deferred<Object> d =
                     eventData.writePoint(tsdb);
             d.addBoth(this);
@@ -331,18 +334,8 @@ public class OpenTSDBSink2 extends AbstractSink implements Configurable {
         statesPermitted.acquire();
         new State(datas, returnPermitCb());
       } else if (size > 0) {
-        stime = System.currentTimeMillis();
         // sort incoming datapoints, tsdb doesn't like unordered
         Collections.sort(datas, EventData.orderBySeriesAndTimestamp());
-//        int start = 0;
-//        String seriesKey = datas.get(0).seriesKey;
-//        for (int end = 1; end < size; end++) {
-//          if (!seriesKey.equals(datas.get(end).seriesKey)) {
-//            statesPermitted.acquire();
-//            new State(datas.subList(start, end), returnPermitCb());
-//            start = end;
-//          }
-//        }
         statesPermitted.acquire();
         new State(datas, returnPermitCb());
       }
